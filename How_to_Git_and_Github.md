@@ -1,3 +1,10 @@
+- [git and github with cmd line](#git-and-github-with-cmd-line)
+  - [Configuration](#configuration)
+  - [Workflow](#workflow)
+    - [How to access the old version of files from github?](#how-to-access-the-old-version-of-files-from-github)
+    - [How to restore the old version from Git?](#how-to-restore-the-old-version-from-git)
+      - [git flow](#git-flow)
+
 # git and github with cmd line
 Following https://youtu.be/DnwEaa5QtpI?si=XRFCqeU2oLHBXB-3
 ## Configuration
@@ -8,14 +15,14 @@ git --version
 
 Add user details as below:
 ```
-git config --global user.name "Sidhant Chaudhary"
-git config --global user.email "s.chaudhary619@gmail.com"
+git config --global user.name "<local username>"
+git config --global user.email "s.**@**.com"
 ```
 
 To add github user account name, make an account on Github first and get username. connect using:
 
 ```
-git config --global github.user "chaudharyz"
+git config --global github.user "<github usename>"
 ```
 
 Some defaults to setup:
