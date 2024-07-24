@@ -1,0 +1,470 @@
+---
+title: "Tidy modeling principles"
+author: "Sidhant Chaudhary"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages and libraries
+
+```{r}
+rm(list = ls())
+
+# packages and libraries --------------------------------------------------
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, tidymodels, openxlsx, conflicted, ggpubr, skimr) 
+
+tidymodels_prefer()
+# ggplot theme
+theme_set(theme_test() + 
+          theme(axis.title = element_text(size = 14),
+          axis.text = element_text(color = "black", size = 12),
+          strip.background = element_rect(fill = "skyblue"),
+          strip.text = element_text(size = 12),
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 14) 
+          ))
+
+```
+
+## Data used in this study
+
+```{r}
+ames <- ames %>% mutate(Sale_Price = log10(Sale_Price))
+ames %>% skim()
+```
+
+# 1. Data budget
+
+The primary approach for empirical model validation is to split the existing pool of data into two distinct sets:
+
+1.  Training set:
+
+-   majority of the data
+
+-   sandbox for model building
+
+2.  Test set:
+
+-   held in reserve until one or two models are chosen as the methods most likely to succeed
+-   critical to look at the test set only once; otherwise, it becomes part of the modeling process
+
+## When is random sampling not appropriate?
+
+1.  In case of class imbalance (one class occuring much less than the other), **stratified sampling** can be used. Using stratified sampling, the training/test split is conducted separately within each class and then these subsamples are combined into the overall training and test set.
+
+2.  For **regression problems**, the outcome data can be artificially binned into quartiles and then stratified sampling can be conducted four separate times. This is an effective method for keeping the distributions of the outcome similar between the training and test set.
+
+3.  For **time series data**, it is more common to use the most recent data for the test dataset. The rsample package contains a function called `initial_time_split()` that is very similar to `initial_split()`. Instead of using random sampling, the prop argument denotes what proportion of the first part of the data should be used as the training set; the function assumes that the data have been pre-sorted in an appropriate order.
+
+```{r}
+set.seed(502)
+ames_split <- initial_split(ames, prop = 0.80, strata = Sale_Price)
+ames_train <- training(ames_split)
+ames_test  <-  testing(ames_split)
+
+dim(ames_train)
+#> [1] 2342   74
+```
+
+NOTE: Parts of the statistics community eschew test sets in general because they believe all of the data should be used for parameter estimation. While there is merit to this argument, it is good modeling practice to have an unbiased set of observations as the final arbiter of model quality. A test set should be avoided only when the data are pathologically small.
+
+## What about a validation set?
+
+"How can we tell what is best if we don't measure performance until the test set?"
+
+It is common to hear about validation sets as an answer to this question, especially in the neural network and deep learning literature. To combat this issue, a small validation set of data were held back and used to measure performance as the network was trained.
+
+Whether validation sets are a subset of the training set or a third allocation in the initial split of the data largely comes down to semantics.
+
+```{r}
+set.seed(52)
+# To put 60% into training, 20% in validation, and 20% in testing:
+ames_val_split <- initial_validation_split(ames, prop = c(0.6, 0.2))
+ames_val_split
+#> <Training/Validation/Testing/Total>
+#> <1758/586/586/2930>
+```
+
+## Multilevel data
+
+With the Ames housing data, a property is considered to be the independent experimental unit. It is safe to assume that, statistically, the data from a property are independent of other properties. For other applications, that is not always the case:
+
+-   For longitudinal data, for example, the same independent experimental unit can be measured over multiple time points. An example would be a human subject in a medical trial.
+
+-   A batch of manufactured product might also be considered the independent experimental unit. In repeated measures designs, replicate data points from a batch are collected at multiple times.
+
+-   Johnson et al. (2018) report an experiment where different trees were sampled across the top and bottom portions of a stem. Here, the tree is the experimental unit and the data hierarchy is sample within stem position within tree.
+
+Chapter 9 of M. Kuhn and Johnson (2020) contains other examples.
+
+In these situations, the data set will have multiple rows per experimental unit. Simple resampling across rows would lead to some data within an experimental unit being in the training set and others in the test set. **Data splitting should occur at the independent experimental unit level of the data.** For example, to produce an 80/20 split of the Ames housing data set, 80% of the properties should be allocated for the training set.
+
+------------------------------------------------------------------------
+
+# 2. Fitting model with parsnip
+
+Fitting models with parsnip might be a good approach to fit some straight forward models.
+
+`fit()` and `predict()` functions allow for consistency in code across packages and it can be done in the following steps as in the example below:
+
+1.  Set the model specifications
+
+```{r}
+# set engine is an equivalent of 
+lm_model <- 
+  linear_reg() %>% 
+  set_engine("lm")
+```
+
+2.  Fit the model
+
+```{r}
+lm_form_fit <- 
+  lm_model %>% 
+  # Recall that Sale_Price has been pre-logged
+  fit(Sale_Price ~ Longitude + Latitude, data = ames_train)
+
+# model output
+tidy(lm_form_fit)
+```
+
+3.  Predict using the fit model
+
+```{r}
+ames_test_pred <- 
+  ames_test %>% 
+  select(Sale_Price) %>% 
+  bind_cols(predict(lm_form_fit, ames_test)) %>% 
+  # Add 95% prediction intervals to the results:
+  bind_cols(predict(lm_form_fit, ames_test, type = "pred_int")) 
+
+ames_test_pred %>%
+  ggplot(aes(x = Sale_Price, y = .pred)) +
+  geom_point() + 
+  stat_cor() + 
+  stat_smooth(method = "lm")
+```
+
+------------------------------------------------------------------------
+
+# 3 The model Workflow
+
+The purpose of this concept (and the corresponding tidymodels `workflow()` object) is to encapsulate the major pieces of the modeling process (similar to the concept of a *pipeline*). The model workflow concept is important for two main reasons:
+
+1.  Encourages **good methodology** since it is a single point of entry to the estimation components of a data analysis.
+2.  To **better organize projects**.
+
+It is important to focus on the broader *modeling process*, instead of only fitting the specific model used to estimate parameters. This broader process (which is called *model workflow* here) includes:
+
+-   preprocessing steps
+-   the model fit itself
+-   potential post-processing activities
+
+## Workflow basics
+
+```{r}
+```
+
+Preparing the workflow
+
+```{r}
+# formula using parsnip (required)
+lm_model <- 
+  linear_reg() %>% 
+  set_engine("lm")
+
+# workflow setup
+lm_wflow <- 
+  workflow() %>% 
+  add_model(lm_model) %>%
+  add_formula(Sale_Price ~ Longitude + Latitude)
+
+# add_variables(outcome = Sale_Price, predictors = c(Longitude, Latitude))
+# another way of giving variables
+
+lm_wflow
+```
+
+fitting the
+
+```{r}
+# fit the model
+lm_fit <- fit(lm_wflow, ames_train)
+
+# predict the model
+ames_test %>% 
+  select(Sale_Price) %>% 
+  bind_cols(predict(lm_fit, ames_test)) %>% 
+  # Add 95% prediction intervals to the results:
+  bind_cols(predict(lm_fit, ames_test, type = "pred_int")) 
+```
+
+For multilevel models like mixed models, the formula might be added in the add model argument as follows:
+
+```{r}
+multilevel_spec <- linear_reg() %>% set_engine("lmer")
+
+multilevel_workflow <- 
+  workflow() %>% 
+  # Pass the data along as-is: 
+  add_variables(outcome = distance, predictors = c(Sex, age, Subject)) %>% 
+  add_model(multilevel_spec, 
+            # This formula is given to the model
+            formula = distance ~ Sex + (age | Subject))
+
+multilevel_fit <- fit(multilevel_workflow, data = Orthodont)
+multilevel_fit
+
+```
+
+How to create multiple workflows at once?
+
+As in the example below, various formula can be given as a list and then create workflows as follows:
+
+```{r}
+location <- list(
+  longitude = Sale_Price ~ Longitude,
+  latitude = Sale_Price ~ Latitude,
+  coords = Sale_Price ~ Longitude + Latitude,
+  neighborhood = Sale_Price ~ Neighborhood
+)
+
+location_models <- workflow_set(preproc = location, models = list(lm = lm_model))
+location_models
+
+#preproc: A list (preferably named) with preprocessing objects
+
+# dplyr and purrr can be used to expand the results as below
+location_models <-
+   location_models %>%
+   mutate(fit = map(info, ~ fit(.x$workflow[[1]], ames_train)))
+location_models
+```
+
+Evaluating the test set
+
+```{r}
+final_lm_res <- last_fit(lm_wflow, ames_split)
+final_lm_res
+
+fitted_lm_wflow <- extract_workflow(final_lm_res)
+collect_metrics(final_lm_res)
+collect_predictions(final_lm_res) %>% slice(1:5)
+```
+
+# 4. Feature engineering with recipes
+
+Recipes package to be used for data pre processing before fitting them in the model
+
+Steps look like this
+
+```{r}
+# read the data
+data(ames)
+ames <- mutate(ames, Sale_Price = log10(Sale_Price))
+
+# split them in training and testing
+set.seed(502)
+ames_split <- initial_split(ames, prop = 0.80, strata = Sale_Price)
+ames_train <- training(ames_split)
+ames_test  <-  testing(ames_split)
+
+# prepare the recipe/ prep the data for modeling
+ames_rec <- 
+  recipe(Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type + 
+           Latitude + Longitude, data = ames_train) %>%
+  step_log(Gr_Liv_Area, base = 10) %>% 
+  step_other(Neighborhood, threshold = 0.01) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact( ~ Gr_Liv_Area:starts_with("Bldg_Type_") ) %>% 
+  step_ns(Latitude, Longitude, deg_free = 20)
+  
+# prep the model
+lm_model <- linear_reg() %>% set_engine("lm")
+
+# put everything in the workflow
+lm_wflow <- 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(ames_rec)
+
+# fit the model on the workflow object
+lm_fit <- fit(lm_wflow, ames_train)
+
+# predict the outcome on test set
+ames_test %>% 
+  select(Sale_Price) %>% 
+  bind_cols(predict(lm_fit, ames_test)) %>% 
+  # Add 95% prediction intervals to the results:
+  bind_cols(predict(lm_fit, ames_test, type = "pred_int")) 
+```
+
+## incomplete information in this chapter at this point. Please refer to the tmwr guidebook
+
+# 5. Model effectiveness
+
+**Based on emperical validation**: using data that were not used to create the model as the substrate to measure effectiveness.
+
+Two types of modeling approaches are:
+
+1.  Predictive modeling:
+
+    -   predictive strength is of primary importance, determined by how close our predictions come to the observed data
+
+    -   
+
+2.  Inferential modeling:
+
+    -   used primarily to understand relationships
+
+    -   emphasizes the choice (and validity) of probabilistic distributions and other generative qualities that define the model
+
+    -   Longstanding issuse: it is difficult to assess the credibility of a model
+
+our advice for those developing inferential models is to use these techniques even when the model will not be used with the primary goal of prediction.
+
+# 6. Resampling to evaluate performance
+
+It is used to understand the performance of a model or even multiple models before using the test set.
+
+Measuring the model performance on the same data on which it is trained can lead to falsely inflated numbers. This especially happens in low-bias models where models can sometimes overfit the data.
+
+Therefore, resampling approaches by keeping a subset separate to estimate on are useful. Resampling of training dataset leads to its split in analysis and assessment dataset. By doing so, we artificially create replications which can give us estimates of our model statistics.
+
+Various resampling methods are as follows:
+
+1.  Cross-validation:
+
+    -   Most common is V-fold cross validation
+    -   Data is partitioned into folds
+    -   Each fold is completely different from other folds
+    -   Ideal no. is V = 10
+
+    ```{r}
+    set.seed(1001)
+    ames_folds <- vfold_cv(ames_train, v = 10)
+    ames_folds
+    ```
+
+2.  Repeated cross-validation:
+
+    -   Similar to CV but here replicates for each fold can be made
+
+    -   Generally used to reduce noise that might be there with normal CV
+
+    ```{r}
+    vfold_cv(ames_train, v = 10, repeats = 5) 
+    ```
+
+3.  Monte-Carlo cross-validation
+
+    -   Similar to normal CV but proportion of data is randomly selected each time.
+
+    -   here the assessment sets are not mutually exclusive.
+
+4.  Validation sets:
+
+    -   Validation sets in traditional sense (3 splits of raw data into training, validatoin and test) are used when original data is very large.
+
+    -   in those cases, one large partition might be enough compared to multiple resamping iterations.
+
+5.  Bootstraping
+
+    -   bootstrap sample of the training set is a sample that is the same size as the training set but is drawn *with replacement*.
+
+    -   This means that some training set data points are selected multiple times for the analysis set.
+
+    -   Bootstrap samples produce performance estimates that have very low variance (unlike cross-validation) but have significant pessimistic bias.
+
+        ```{r}
+        bootstraps(ames_train, times = 5)
+        ```
+
+6.  Rolling forcasting origin resampling
+
+    -   emulates how time series data is often partitioned in practice, estimating the model with historical data and evaluating it with the most recent data
+
+### Estimating performance
+```{r}
+keep_pred <- control_resamples(save_pred = TRUE, save_workflow = TRUE)
+
+set.seed(1003)
+rf_res <- 
+  rf_wflow %>% 
+  fit_resamples(resamples = ames_folds, control = keep_pred)
+rf_res
+```
+
+The models created during resampling are not retained. These models are trained for the purpose of evaluating performance, and we typically do not need them after we have computed performance statistics. If a particular modeling approach does turn out to be the best option for our data set, then the best choice is to fit again to the whole training set so the model parameters can be estimated with more data.
+
+# 7. comparing models with resampling
+
+```{r}
+
+basic_rec <- 
+  recipe(Sale_Price ~ Neighborhood + Gr_Liv_Area + Year_Built + Bldg_Type + 
+           Latitude + Longitude, data = ames_train) %>%
+  step_log(Gr_Liv_Area, base = 10) %>% 
+  step_other(Neighborhood, threshold = 0.01) %>% 
+  step_dummy(all_nominal_predictors())
+
+interaction_rec <- 
+  basic_rec %>% 
+  step_interact( ~ Gr_Liv_Area:starts_with("Bldg_Type_") ) 
+
+spline_rec <- 
+  interaction_rec %>% 
+  step_ns(Latitude, Longitude, deg_free = 50)
+
+preproc <- 
+  list(basic = basic_rec, 
+       interact = interaction_rec, 
+       splines = spline_rec
+  )
+
+lm_models <- workflow_set(preproc, list(lm = linear_reg()), cross = FALSE)
+lm_models
+
+```
+
+```{r}
+lm_models <- 
+  lm_models %>% 
+  workflow_map("fit_resamples", 
+               # Options to `workflow_map()`: 
+               seed = 1101, verbose = TRUE,
+               # Options to `fit_resamples()`: 
+               resamples = ames_folds, control = keep_pred)
+
+lm_models
+
+```
+
+```{r}
+collect_metrics(lm_models, summarize = F) %>% 
+  filter(.metric == "rmse") %>% view()
+
+```
+
+```{r}
+four_models <- 
+  as_workflow_set(random_forest = rf_res) %>% 
+  bind_rows(lm_models)
+four_models
+
+```
+
+```{r}
+library(ggrepel)
+autoplot(four_models, metric = "rsq") +
+  geom_text_repel(aes(label = wflow_id), nudge_x = 1/8, nudge_y = 1/100) +
+  theme(legend.position = "none")
+```
+
