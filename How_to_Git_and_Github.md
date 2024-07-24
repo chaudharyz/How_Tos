@@ -1,13 +1,18 @@
-- [git and github with cmd line](#git-and-github-with-cmd-line)
-  - [Configuration](#configuration)
-  - [Workflow](#workflow)
-    - [How to access the old version of files from github?](#how-to-access-the-old-version-of-files-from-github)
-    - [How to restore the old version from Git?](#how-to-restore-the-old-version-from-git)
-      - [git flow](#git-flow)
+- [1. git and github with cmd line](#1-git-and-github-with-cmd-line)
+  - [1.1. Configuration](#11-configuration)
+  - [1.2. Workflow](#12-workflow)
+    - [1.2.1. How to access the old version of files from github?](#121-how-to-access-the-old-version-of-files-from-github)
+    - [1.2.2. How to restore the old version from Git?](#122-how-to-restore-the-old-version-from-git)
+      - [1.2.2.1. git flow](#1221-git-flow)
+  - [1.3. how to connect two computers with github](#13-how-to-connect-two-computers-with-github)
+    - [1.3.1. go to the work dir in the new computer](#131-go-to-the-work-dir-in-the-new-computer)
+    - [1.3.2. initiate the git and add remote the github repo](#132-initiate-the-git-and-add-remote-the-github-repo)
+    - [1.3.3. git pull first from github repo](#133-git-pull-first-from-github-repo)
+    - [1.3.4. git add, commit and push](#134-git-add-commit-and-push)
 
-# git and github with cmd line
+# 1. git and github with cmd line
 Following https://youtu.be/DnwEaa5QtpI?si=XRFCqeU2oLHBXB-3
-## Configuration
+## 1.1. Configuration
 To make it work, check if you have git in your computer
 ```
 git --version
@@ -29,9 +34,12 @@ Some defaults to setup:
 ```
 git config --global core.autocrlf input
 git config --global core.editor "code --wait"
+
+# on HPC clusters, to set nano, Vim is default
+git config --global core.editor "nano"
 ```
 
-## Workflow
+## 1.2. Workflow
 5 commands in general will work for 95% of work with git and github. These are: 
 1. `git status`: check the current status of files, can be used at various stages, 
 2. `git add`: to add or stage a change, 
@@ -131,7 +139,7 @@ nano .gitignore
 
 Add the directories or files in .gitignore to avoid them from syncing in the github repo. 
 
-### How to access the old version of files from github?
+### 1.2.1. How to access the old version of files from github?
 1. Search the old versions using:
 ```
 git log <file/dir>
@@ -161,14 +169,14 @@ Some other options with `git diff` are also available which I am unfamiliar to a
 
 But Git lens feature in VS code works the best. 
 
-### How to restore the old version from Git?
+### 1.2.2. How to restore the old version from Git?
 commit code is called **sha** for some reason
 
 ```
 git checkout <sha> -- <file>
 ```
 
-#### git flow
+#### 1.2.2.1. git flow
 https://riffomonas.org/code_club/2020-07-09-github-flow 
 
 1. Create an issue in your repository’s issue tracker on GitHub
@@ -195,3 +203,36 @@ git push
 
 8. Refresh the issue and see that it has closed or close it yourself
 
+uncommit a  commited file
+```
+git reset --soft HEAD^
+git reset HEAD -- <file>
+
+```
+## 1.3. how to connect two computers with github
+### 1.3.1. go to the work dir in the new computer
+```
+cd path/to/new/to/sync/dir/
+```
+
+### 1.3.2. initiate the git and add remote the github repo
+```
+git init
+git remote add origin https://github.com/<username>/<github_repo>.git
+git status
+```
+
+### 1.3.3. git pull first from github repo
+```
+git config pull.rebase false
+git pull origin main --allow-unrelated-histories
+git pull origin main
+```
+
+### 1.3.4. git add, commit and push
+```
+git add <file>
+git commit -m "<commit message>"
+git push -u origin main
+git push origin main
+```
